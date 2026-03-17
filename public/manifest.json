@@ -1,0 +1,22 @@
+{
+  "name": "JoonixLAN",
+  "short_name": "JoonixLAN",
+  "description": "Управление ПК по локальной сети",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050505",
+  "theme_color": "#050505",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://picsum.photos/seed/joonix/192/192",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://picsum.photos/seed/joonix/512/512",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

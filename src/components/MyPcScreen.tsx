@@ -38,9 +38,25 @@ export function MyPcScreen({ isConfigured, onGoToSettings, onDisconnect }: MyPcS
       lanService.send('power_off');
       setIsPcOn(false);
     } else {
-      // Wake-on-LAN simulation
-      lanService.send('power_on');
-      setIsPcOn(true);
+      setIsLoading('power');
+      try {
+        // Wake-on-LAN via Node.js backend
+        const mac = localStorage.getItem('pc_mac') || '00:E2:69:8B:6F:C7';
+        const ip = localStorage.getItem('pc_ip') || '192.168.0.255';
+        const port = localStorage.getItem('pc_port') || '9';
+        
+        await fetch('/api/wake', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mac, ip, port })
+        });
+        
+        setIsPcOn(true);
+      } catch (error) {
+        console.error('Failed to send Wake-on-LAN packet:', error);
+      } finally {
+        setIsLoading(null);
+      }
     }
   };
 

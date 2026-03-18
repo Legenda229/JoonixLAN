@@ -8,6 +8,7 @@
         android:allowBackup="true"
         android:label="PC Remote"
         android:supportsRtl="true"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:usesCleartextTraffic="true"> <!-- Разрешаем ws:// (без шифрования) -->
         
         <activity

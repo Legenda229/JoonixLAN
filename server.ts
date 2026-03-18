@@ -9,6 +9,11 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Health check
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", uptime: process.uptime() });
+  });
+
   // API route for Wake-on-LAN
   app.post("/api/wake", (req, res) => {
     const { mac, ip = "192.168.0.255", port = 9 } = req.body;

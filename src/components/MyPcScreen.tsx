@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
-import { Power, RotateCcw, Camera, Trash2, MonitorPlay, Settings, X, Maximize2 } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Power, RotateCcw, Camera, Trash2, MonitorPlay, Settings, X, Wifi, WifiOff, Activity } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Popup } from './Popup';
 import { Screen } from './Screen';
 import { lanService } from '../services/lanService';
+import { haptic } from '../utils/haptics';
 
 interface MyPcScreenProps {
   isConfigured: boolean;
@@ -15,6 +16,7 @@ export function MyPcScreen({ isConfigured, onGoToSettings, onDisconnect }: MyPcS
   const [isPcOn, setIsPcOn] = useState(false);
   const [isDisconnectPopupOpen, setIsDisconnectPopupOpen] = useState(false);
   const [isLoading, setIsLoading] = useState<string | null>(null);
+  const [connectionQuality, setConnectionQuality] = useState<'good' | 'poor' | 'none'>('none');
   
   // States for screenshot notification and viewing
   const [screenshotNotification, setScreenshotNotification] = useState<string | null>(null);
@@ -28,15 +30,36 @@ export function MyPcScreen({ isConfigured, onGoToSettings, onDisconnect }: MyPcS
       if (data.type === 'screenshot' && data.image) {
         setScreenshotNotification(`data:image/jpeg;base64,${data.image}`);
         setIsLoading(null);
+        haptic.success();
+      }
+      if (data.status === 'success') {
+        setConnectionQuality('good');
+        setIsPcOn(true);
       }
     });
-    return () => unsubscribe();
+    
+    const checkInterval = setInterval(() => {
+      if (lanService.isConnected) {
+        setConnectionQuality('good');
+        setIsPcOn(true);
+      } else {
+        setConnectionQuality('none');
+        setIsPcOn(false);
+      }
+    }, 2000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(checkInterval);
+    };
   }, []);
 
   const handlePowerToggle = async () => {
+    haptic.medium();
     if (isPcOn) {
       lanService.send('power_off');
       setIsPcOn(false);
+      setConnectionQuality('none');
     } else {
       setIsLoading('power');
       try {
@@ -45,15 +68,27 @@ export function MyPcScreen({ isConfigured, onGoToSettings, onDisconnect }: MyPcS
         const ip = localStorage.getItem('pc_ip') || '192.168.0.255';
         const port = localStorage.getItem('pc_port') || '9';
         
-        await fetch('/api/wake', {
+        const response = await fetch('/api/wake', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ mac, ip, port })
         });
         
-        setIsPcOn(true);
+        if (response.ok) {
+          haptic.success();
+          // Wait for PC to boot and server to start
+          setTimeout(() => {
+            const savedIp = localStorage.getItem('pc_ip');
+            const savedPort = localStorage.getItem('pc_port') || '8765';
+            const savedTunnelId = localStorage.getItem('pc_tunnelId') || '';
+            if (savedIp) lanService.connect(savedIp, savedPort, savedTunnelId);
+          }, 5000);
+        } else {
+          haptic.error();
+        }
       } catch (error) {
         console.error('Failed to send Wake-on-LAN packet:', error);
+        haptic.error();
       } finally {
         setIsLoading(null);
       }
@@ -61,31 +96,38 @@ export function MyPcScreen({ isConfigured, onGoToSettings, onDisconnect }: MyPcS
   };
 
   const handleRestart = async () => {
+    haptic.heavy();
     lanService.send('restart');
     setIsPcOn(false);
-    setTimeout(() => setIsPcOn(true), 5000);
+    setConnectionQuality('none');
+    setTimeout(() => {
+      const savedIp = localStorage.getItem('pc_ip');
+      const savedPort = localStorage.getItem('pc_port') || '8765';
+      const savedTunnelId = localStorage.getItem('pc_tunnelId') || '';
+      if (savedIp) lanService.connect(savedIp, savedPort, savedTunnelId);
+    }, 10000);
   };
 
   const handleScreenshot = async () => {
+    haptic.light();
     setIsLoading('screenshot');
     if (lanService.isConnected) {
       lanService.send('take_screenshot');
-      // Fallback if server doesn't respond in 3 seconds
+      // Fallback if server doesn't respond in 5 seconds
       setTimeout(() => {
         if (isLoading === 'screenshot') {
-          setScreenshotNotification(`https://picsum.photos/seed/${Math.random()}/1920/1080`);
           setIsLoading(null);
+          haptic.error();
         }
-      }, 3000);
+      }, 5000);
     } else {
-      // Simulate for local testing without server
-      await new Promise(r => setTimeout(r, 1000));
-      setScreenshotNotification(`https://picsum.photos/seed/${Math.random()}/1920/1080`);
+      haptic.error();
       setIsLoading(null);
     }
   };
 
   const handleDisconnect = () => {
+    haptic.medium();
     setIsDisconnectPopupOpen(false);
     lanService.disconnect();
     localStorage.removeItem('pc_ip');
@@ -106,7 +148,7 @@ export function MyPcScreen({ isConfigured, onGoToSettings, onDisconnect }: MyPcS
             Чтобы управлять компьютером, необходимо добавить его данные в настройках.
           </p>
           <button
-            onClick={onGoToSettings}
+            onClick={() => { haptic.light(); onGoToSettings(); }}
             className="flex items-center justify-center w-full max-w-[240px] py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium transition-all shadow-[0_0_20px_rgba(79,70,229,0.3)] active:scale-[0.98]"
           >
             <Settings className="w-5 h-5 mr-2" />
@@ -122,13 +164,39 @@ export function MyPcScreen({ isConfigured, onGoToSettings, onDisconnect }: MyPcS
       title={pcName} 
       headerRight={
         <button 
-          onClick={() => setIsDisconnectPopupOpen(true)}
+          onClick={() => { haptic.light(); setIsDisconnectPopupOpen(true); }}
           className="p-2.5 bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 rounded-xl transition-colors border border-transparent hover:border-rose-500/30"
         >
           <Trash2 className="w-5 h-5" />
         </button>
       }
     >
+      {/* Connection Status Bar */}
+      <div className="flex items-center justify-between px-4 py-2 mb-4 bg-white/5 rounded-2xl border border-white/10">
+        <div className="flex items-center gap-2">
+          <div className={`w-2 h-2 rounded-full ${isPcOn ? 'bg-emerald-500 animate-pulse' : 'bg-slate-500'}`} />
+          <span className="text-xs font-medium text-slate-300">
+            {isPcOn ? 'В сети' : 'Не в сети'}
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1">
+            <Activity className={`w-3 h-3 ${isPcOn ? 'text-indigo-400' : 'text-slate-500'}`} />
+            <span className="text-[10px] text-slate-400">LAN</span>
+          </div>
+          <div className="flex items-center gap-1">
+            {connectionQuality === 'good' ? (
+              <Wifi className="w-3 h-3 text-emerald-400" />
+            ) : (
+              <WifiOff className="w-3 h-3 text-rose-400" />
+            )}
+            <span className="text-[10px] text-slate-400">
+              {connectionQuality === 'good' ? 'Стабильно' : 'Нет связи'}
+            </span>
+          </div>
+        </div>
+      </div>
+
       {/* Screenshot Notification Toast */}
       <AnimatePresence>
         {screenshotNotification && (
@@ -148,6 +216,7 @@ export function MyPcScreen({ isConfigured, onGoToSettings, onDisconnect }: MyPcS
             <div className="flex items-center gap-2 shrink-0">
               <button 
                 onClick={() => {
+                  haptic.light();
                   setViewingScreenshot(screenshotNotification);
                   setScreenshotNotification(null);
                 }}
@@ -156,7 +225,7 @@ export function MyPcScreen({ isConfigured, onGoToSettings, onDisconnect }: MyPcS
                 Смотреть
               </button>
               <button 
-                onClick={() => setScreenshotNotification(null)}
+                onClick={() => { haptic.light(); setScreenshotNotification(null); }}
                 className="p-2 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-xl transition-colors"
               >
                 <X className="w-4 h-4" />
@@ -178,7 +247,7 @@ export function MyPcScreen({ isConfigured, onGoToSettings, onDisconnect }: MyPcS
             <div className="flex justify-between items-center p-4 bg-gradient-to-b from-black/80 to-transparent">
               <h3 className="text-white font-medium">Просмотр скриншота</h3>
               <button 
-                onClick={() => setViewingScreenshot(null)}
+                onClick={() => { haptic.light(); setViewingScreenshot(null); }}
                 className="p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors"
               >
                 <X className="w-6 h-6" />
@@ -221,13 +290,13 @@ export function MyPcScreen({ isConfigured, onGoToSettings, onDisconnect }: MyPcS
             {isPcOn ? 'Выключить ПК' : 'Включить ПК'}
           </h3>
           <p className="text-sm text-slate-400">
-            {isPcOn ? 'Штатное завершение работы' : 'Отправка Magic Packet'}
+            {isPcOn ? 'Штатное завершение работы' : 'Локальный Wake-on-LAN'}
           </p>
         </div>
       </div>
 
       {/* Grid Controls */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-4 mt-4">
         <button
           onClick={handleRestart}
           disabled={!isPcOn || isLoading !== null}
@@ -273,7 +342,7 @@ export function MyPcScreen({ isConfigured, onGoToSettings, onDisconnect }: MyPcS
           </p>
           <div className="flex gap-3 w-full">
             <button
-              onClick={() => setIsDisconnectPopupOpen(false)}
+              onClick={() => { haptic.light(); setIsDisconnectPopupOpen(false); }}
               className="flex-1 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-white font-medium transition-colors"
             >
               Отмена

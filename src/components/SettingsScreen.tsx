@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Monitor, Network, Key, Wifi, WifiOff, CheckCircle2, Server, Info, Download, Globe } from 'lucide-react';
+import { Monitor, Network, Key, Wifi, WifiOff, CheckCircle2, Server, Info, Download, Globe, AlertTriangle } from 'lucide-react';
 import { Input } from './Input';
 import { Popup } from './Popup';
 import { BottomSheet } from './BottomSheet';
 import { Screen } from './Screen';
 import { lanService } from '../services/lanService';
 import { PYTHON_SERVER_CODE } from '../utils/pythonServerTemplate';
+import { haptic } from '../utils/haptics';
 
 interface SettingsScreenProps {
   onSave: () => void;
@@ -21,7 +22,8 @@ export function SettingsScreen({ onSave, isConfigured }: SettingsScreenProps) {
   const [tunnelId, setTunnelId] = useState(localStorage.getItem('pc_tunnelId') || '');
   
   const [isConnecting, setIsConnecting] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error' | 'mixed_content'>('idle');
+  const [errorMessage, setErrorMessage] = useState('');
   const [showChecklist, setShowChecklist] = useState(false);
 
   useEffect(() => {
@@ -35,6 +37,7 @@ export function SettingsScreen({ onSave, isConfigured }: SettingsScreenProps) {
   }, [isConfigured]);
 
   const handleConnect = async () => {
+    haptic.medium();
     localStorage.setItem('pc_name', pcName);
     localStorage.setItem('pc_ip', ipAddress);
     localStorage.setItem('pc_port', port);
@@ -48,13 +51,26 @@ export function SettingsScreen({ onSave, isConfigured }: SettingsScreenProps) {
     setIsConnecting(true);
     setConnectionStatus('idle');
     
-    const success = await lanService.connect(ipAddress, port, tunnelId);
+    const result = await lanService.connect(ipAddress, port, tunnelId);
     
-    setConnectionStatus(success ? 'success' : 'error');
+    if (result === true) {
+      haptic.success();
+      setConnectionStatus('success');
+      setErrorMessage('');
+    } else if (result === 'mixed_content') {
+      haptic.error();
+      setConnectionStatus('mixed_content');
+      setErrorMessage('');
+    } else {
+      haptic.error();
+      setConnectionStatus('error');
+      setErrorMessage(typeof result === 'string' ? result : 'Неизвестная ошибка');
+    }
     setIsConnecting(false);
   };
 
   const handleDownloadServer = () => {
+    haptic.light();
     const blob = new Blob([PYTHON_SERVER_CODE], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -79,11 +95,11 @@ export function SettingsScreen({ onSave, isConfigured }: SettingsScreenProps) {
           />
           <div className="grid grid-cols-[2fr_1fr] gap-3">
             <Input 
-              label="IP / Домен" 
+              label="IP / Ngrok" 
               icon={<Globe className="w-5 h-5" />} 
-              placeholder="192.168.1.100"
+              placeholder="192.168.1.100 или ngrok-free.app"
               value={ipAddress}
-              onChange={(e) => setIpAddress(e.target.value)}
+              onChange={(e) => setIpAddress(e.target.value.toLowerCase())}
             />
             <Input 
               label="Порт" 
@@ -183,17 +199,46 @@ export function SettingsScreen({ onSave, isConfigured }: SettingsScreenProps) {
 
         {/* Попап ошибки подключения */}
         <Popup 
-          isOpen={connectionStatus === 'error'} 
+          isOpen={connectionStatus === 'error' || connectionStatus === 'mixed_content'} 
           onClose={() => setConnectionStatus('idle')}
           title="Ошибка подключения"
         >
           <div className="flex flex-col items-center text-center pb-2">
-            <div className="w-16 h-16 bg-rose-500/10 rounded-full flex items-center justify-center mb-4 border border-rose-500/20 shadow-[0_0_30px_rgba(244,63,94,0.2)]">
-              <WifiOff className="w-8 h-8 text-rose-400" />
+            <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 border shadow-[0_0_30px_rgba(244,63,94,0.2)] ${connectionStatus === 'mixed_content' ? 'bg-amber-500/10 border-amber-500/20 shadow-[0_0_30px_rgba(245,158,11,0.2)]' : 'bg-rose-500/10 border-rose-500/20 shadow-[0_0_30px_rgba(244,63,94,0.2)]'}`}>
+              {connectionStatus === 'mixed_content' ? (
+                <AlertTriangle className="w-8 h-8 text-amber-400" />
+              ) : (
+                <WifiOff className="w-8 h-8 text-rose-400" />
+              )}
             </div>
-            <p className="text-slate-300 mb-6">
-              Не удалось установить WebSocket соединение с {ipAddress}:{port}.
-            </p>
+            
+            {connectionStatus === 'mixed_content' ? (
+              <div className="text-slate-300 mb-6 text-sm">
+                <p className="mb-2 font-medium text-amber-400">Блокировка браузера (HTTPS)</p>
+                Браузер не позволяет подключаться к локальным адресам (192.168.x.x) с защищенного сайта.
+                <br/><br/>
+                <b>Решение:</b> Запустите на ПК утилиту Ngrok: <br/>
+                <code className="bg-black/30 px-2 py-1 rounded text-amber-200 mt-2 inline-block">ngrok http 8765</code>
+                <br/>И введите полученный адрес (например, <i>1234.ngrok-free.app</i>) в поле IP.
+              </div>
+            ) : (
+              <div className="text-slate-300 mb-6">
+                <p>Не удалось установить WebSocket соединение.</p>
+                {errorMessage && (
+                  <div className="mt-3 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-xs text-red-300 text-left break-all">
+                    <b>Детали ошибки:</b><br/>
+                    {errorMessage}
+                  </div>
+                )}
+                <br/>
+                <span className="text-sm text-slate-400 text-left block">
+                  1. Убедитесь, что черное окно с <b>server.py</b> запущено на ПК.<br/>
+                  2. Проверьте, правильно ли скопирована ссылка.<br/>
+                  3. Возможно, туннель загружается слишком долго. Попробуйте еще раз.
+                </span>
+              </div>
+            )}
+
             <div className="flex gap-3 w-full">
               <button
                 onClick={() => setConnectionStatus('idle')}
@@ -206,9 +251,9 @@ export function SettingsScreen({ onSave, isConfigured }: SettingsScreenProps) {
                   setConnectionStatus('idle');
                   setShowChecklist(true);
                 }}
-                className="flex-1 py-3 rounded-xl bg-rose-600/20 hover:bg-rose-600/30 border border-rose-500/30 text-rose-200 font-medium transition-colors flex items-center justify-center"
+                className="flex-1 py-3 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 text-indigo-200 font-medium transition-colors flex items-center justify-center"
               >
-                Что не так?
+                Инструкция
               </button>
             </div>
           </div>
@@ -233,37 +278,22 @@ export function SettingsScreen({ onSave, isConfigured }: SettingsScreenProps) {
               </div>
             </div>
 
-            <div className="flex items-start gap-3 p-3 rounded-xl bg-white/5 border border-white/5">
-              <div className="mt-0.5 w-5 h-5 rounded-full bg-indigo-500/20 flex items-center justify-center shrink-0">
-                <span className="text-indigo-400 text-xs font-bold">2</span>
-              </div>
-              <div>
-                <div className="text-white font-medium text-sm">Доступ из любой точки мира (Интернет)</div>
-                <div className="text-slate-400 text-xs mt-1">
-                  Чтобы управлять ПК не только из домашней Wi-Fi сети, вам нужно:
-                  <ul className="list-disc pl-4 mt-1 space-y-1">
-                    <li>Иметь белый (статический) IP и настроить <strong>Проброс портов (Port Forwarding)</strong> на роутере для порта {port}.</li>
-                    <li>ИЛИ использовать сервисы типа <strong>Ngrok</strong>, <strong>Tailscale</strong> или <strong>ZeroTier</strong>. Введите выданный ими IP/Домен в поле "IP / Домен".</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-start gap-3 p-3 rounded-xl bg-white/5 border border-white/5">
-              <div className="mt-0.5 w-5 h-5 rounded-full bg-indigo-500/20 flex items-center justify-center shrink-0">
-                <span className="text-indigo-400 text-xs font-bold">3</span>
+            <div className="flex items-start gap-3 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20">
+              <div className="mt-0.5 w-5 h-5 rounded-full bg-amber-500/20 flex items-center justify-center shrink-0">
+                <span className="text-amber-400 text-xs font-bold">!</span>
               </div>
               <div>
                 <div className="text-white font-medium text-sm">Блокировка браузером (Mixed Content)</div>
-                <div className="text-slate-400 text-xs mt-1">
-                  Если вы открыли это приложение по HTTPS, браузер заблокирует подключение к локальному IP. Соберите приложение в APK (Capacitor) или используйте Ngrok (он дает HTTPS ссылку).
+                <div className="text-amber-200/80 text-xs mt-1">
+                  Так как приложение открыто по HTTPS, браузер заблокирует подключение к локальному IP (192.168.x.x). 
+                  Вам <b>обязательно</b> нужно использовать Ngrok. Скачайте его на ПК и выполните: <code>ngrok http 8765</code>. Введите выданный адрес в поле IP.
                 </div>
               </div>
             </div>
             
             <div className="flex items-start gap-3 p-3 rounded-xl bg-white/5 border border-white/5">
               <div className="mt-0.5 w-5 h-5 rounded-full bg-indigo-500/20 flex items-center justify-center shrink-0">
-                <span className="text-indigo-400 text-xs font-bold">4</span>
+                <span className="text-indigo-400 text-xs font-bold">3</span>
               </div>
               <div>
                 <div className="text-white font-medium text-sm">Брандмауэр Windows</div>

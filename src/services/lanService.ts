@@ -10,7 +10,7 @@ class LanService {
   private lastTunnelId = '';
   private isExplicitlyDisconnected = false;
 
-  connect(ip: string, port: string, tunnelId: string): Promise<boolean> {
+  connect(ip: string, port: string, tunnelId: string): Promise<boolean | string> {
     this.lastIp = ip;
     this.lastPort = port;
     this.lastTunnelId = tunnelId;
@@ -18,19 +18,38 @@ class LanService {
 
     return new Promise((resolve) => {
       try {
-        // Закрываем предыдущее соединение, если оно есть
         this.disconnect(false);
 
-        console.log(`Подключение к ws://${ip}:${port}...`);
-        this.ws = new WebSocket(`ws://${ip}:${port}`);
+        let wsUrl = `ws://${ip}:${port}`;
         
-        // Таймаут на подключение (5 секунд)
+        // Clean up the input if user pasted a full URL
+        let cleanIp = ip.replace(/^https?:\/\//, '').replace(/^wss?:\/\//, '').replace(/\/$/, '');
+        
+        // If it's a tunneling service, use wss:// and ignore the local port
+        const lowerIp = cleanIp.toLowerCase();
+        if (lowerIp.includes('ngrok') || lowerIp.includes('pinggy.link') || lowerIp.includes('pinggy.io') || lowerIp.includes('loca.lt') || lowerIp.includes('serveo.net') || lowerIp.includes('serveousercontent.com') || lowerIp.includes('trycloudflare') || lowerIp.includes('srv.us') || lowerIp.includes('localhost.run') || lowerIp.includes('lhr.life')) {
+          wsUrl = `wss://${lowerIp}`; // Use lowerIp here because domains are case-insensitive and it prevents issues
+        } else if (window.location.protocol === 'https:' && /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(cleanIp)) {
+          // Browser will block ws://192.168.x.x from https://
+          console.error("Mixed content error: Cannot connect to insecure local IP from HTTPS.");
+          return resolve('mixed_content');
+        } else if (/[a-zA-Z]/.test(cleanIp) && cleanIp !== 'localhost') {
+           // Any other domain name should be wss://
+           wsUrl = `wss://${cleanIp}`;
+        } else {
+          wsUrl = `ws://${cleanIp}:${port}`;
+        }
+
+        console.log(`Подключение к ${wsUrl}...`);
+        this.ws = new WebSocket(wsUrl);
+        
         const timeout = setTimeout(() => {
           if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
+            console.log('Таймаут подключения (15 сек)');
             this.ws.close();
-            resolve(false);
+            resolve(`timeout: Connection to ${wsUrl} timed out`);
           }
-        }, 5000);
+        }, 15000);
 
         this.ws.onopen = () => {
           console.log('WebSocket открыт, отправка авторизации...');
@@ -41,17 +60,15 @@ class LanService {
           try {
             const data = JSON.parse(event.data);
             
-            // Обработка ответа на авторизацию
             if (data.status === 'success') {
               clearTimeout(timeout);
               this.isConnected = true;
               resolve(true);
             } else if (data.status === 'error') {
               clearTimeout(timeout);
-              resolve(false);
+              resolve('auth_error');
             }
             
-            // Рассылка данных подписчикам (например, кадры стрима)
             this.handlers.forEach(h => h(data));
           } catch (e) {
             console.error('Ошибка парсинга сообщения:', e);
@@ -61,14 +78,13 @@ class LanService {
         this.ws.onerror = (error) => {
           console.error('WebSocket ошибка:', error);
           clearTimeout(timeout);
-          resolve(false);
+          resolve(`error: Failed to connect to ${wsUrl}`);
         };
 
         this.ws.onclose = () => {
           console.log('WebSocket закрыт');
           this.isConnected = false;
           
-          // Авто-переподключение, если не было явного отключения
           if (!this.isExplicitlyDisconnected && this.lastIp) {
             console.log('Попытка переподключения через 3 секунды...');
             clearTimeout(this.reconnectTimer);

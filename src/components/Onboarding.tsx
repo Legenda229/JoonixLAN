@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion } from 'motion/react';
 import { Shield, FileText, ArrowRight, Info } from 'lucide-react';
 import { BottomSheet } from './BottomSheet';
+import { haptic } from '../utils/haptics';
 
 interface OnboardingProps {
   onComplete: () => void;
@@ -10,6 +11,16 @@ interface OnboardingProps {
 
 export function Onboarding({ onComplete }: OnboardingProps) {
   const [activeSheet, setActiveSheet] = useState<'privacy' | 'terms' | null>(null);
+
+  const handleComplete = () => {
+    haptic.success();
+    onComplete();
+  };
+
+  const openSheet = (type: 'privacy' | 'terms') => {
+    haptic.light();
+    setActiveSheet(type);
+  };
 
   return (
     <div className="flex flex-col h-full w-full px-6 pt-16 pb-12 overflow-y-auto">
@@ -32,7 +43,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
 
         <div className="flex flex-col gap-4 mt-auto">
           <button
-            onClick={() => setActiveSheet('privacy')}
+            onClick={() => openSheet('privacy')}
             className="flex items-center p-4 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors text-left group"
           >
             <div className="p-3 bg-white/5 rounded-xl mr-4 group-hover:bg-white/10 transition-colors">
@@ -45,7 +56,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
           </button>
 
           <button
-            onClick={() => setActiveSheet('terms')}
+            onClick={() => openSheet('terms')}
             className="flex items-center p-4 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors text-left group"
           >
             <div className="p-3 bg-white/5 rounded-xl mr-4 group-hover:bg-white/10 transition-colors">
@@ -59,7 +70,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
         </div>
 
         <button
-          onClick={onComplete}
+          onClick={handleComplete}
           className="mt-10 w-full py-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium flex items-center justify-center transition-all shadow-[0_0_20px_rgba(79,70,229,0.3)] hover:shadow-[0_0_30px_rgba(79,70,229,0.5)] active:scale-[0.98]"
         >
           Принять и продолжить

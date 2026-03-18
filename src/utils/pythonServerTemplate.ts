@@ -8,6 +8,7 @@ import io
 import time
 from pynput.keyboard import Controller as KeyboardController, Key
 from pynput.mouse import Controller as MouseController, Button
+import sys
 
 keyboard = KeyboardController()
 mouse = MouseController()
@@ -27,19 +28,30 @@ KEY_MAP = {
     "Meta": Key.cmd, "Delete": Key.delete
 }
 
-async def handle_client(websocket, path):
+async def handle_client(websocket, *args):
     global IS_STREAMING
-    print("Клиент подключен. Ожидание авторизации...")
     try:
-        auth_msg = await websocket.recv()
+        client_ip = websocket.remote_address[0] if websocket.remote_address else "Unknown"
+    except:
+        client_ip = "Unknown"
+    print(f"\\n[+] Новое подключение от: {client_ip}")
+    print("[*] Ожидание пароля (ID) от клиента...")
+    
+    try:
+        # Ждем сообщение с авторизацией (таймаут 10 секунд)
+        auth_msg = await asyncio.wait_for(websocket.recv(), timeout=10.0)
         auth_data = json.loads(auth_msg)
         
-        if auth_data.get("tunnel_id") != TUNNEL_ID:
+        received_id = auth_data.get("tunnel_id")
+        print(f"[*] Получен пароль: {received_id}")
+        
+        if str(received_id) != str(TUNNEL_ID):
+            print(f"[-] ОШИБКА: Неверный пароль! Ожидался: {TUNNEL_ID}")
             await websocket.send(json.dumps({"status": "error", "message": "Неверный ID туннеля"}))
             return
             
         await websocket.send(json.dumps({"status": "success"}))
-        print("Клиент успешно авторизован!")
+        print("[+] Клиент УСПЕШНО авторизован! Связь установлена.")
 
         stream_task = asyncio.create_task(stream_screen(websocket))
         command_task = asyncio.create_task(receive_commands(websocket))
@@ -51,17 +63,22 @@ async def handle_client(websocket, path):
         for task in pending:
             task.cancel()
             
+    except asyncio.TimeoutError:
+        print("[-] ОШИБКА: Клиент подключился, но не прислал пароль в течение 10 секунд.")
     except websockets.exceptions.ConnectionClosed:
-        print("Клиент отключился.")
+        print("[-] Клиент отключился.")
     except Exception as e:
-        print(f"Ошибка: {e}")
+        print(f"[-] Ошибка соединения: {e}")
     finally:
         IS_STREAMING = False
+        print("[*] Соединение закрыто. Ожидание новых клиентов...")
 
 async def stream_screen(websocket):
     global QUALITY, IS_STREAMING
     with mss.mss() as sct:
-        monitor = sct.monitors[1] # Основной монитор
+        # Пытаемся захватить основной монитор
+        monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+        
         while True:
             try:
                 if not IS_STREAMING:
@@ -122,19 +139,18 @@ async def receive_commands(websocket):
             if msg_type == "start_stream":
                 IS_STREAMING = True
                 QUALITY = data.get("quality", 50)
-                print(f"Трансляция запущена. Качество: {QUALITY}%")
+                print(f"[*] Трансляция экрана запущена. Качество: {QUALITY}%")
             
             elif msg_type == "stop_stream":
                 IS_STREAMING = False
-                print("Трансляция остановлена.")
+                print("[*] Трансляция экрана остановлена.")
                 
             elif msg_type == "set_quality":
                 QUALITY = data.get("quality", 50)
-                print(f"Качество изменено на: {QUALITY}%")
                 
             elif msg_type == "take_screenshot":
                 with mss.mss() as sct:
-                    mon = sct.monitors[1]
+                    mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
                     sct_img = sct.grab(mon)
                     img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
                     buf = io.BytesIO()
@@ -144,7 +160,6 @@ async def receive_commands(websocket):
                         "type": "screenshot",
                         "image": b64
                     }))
-                    print("Скриншот отправлен.")
             
             elif msg_type == "keydown":
                 key = data.get("key")
@@ -163,7 +178,7 @@ async def receive_commands(websocket):
             elif msg_type == "mouse_move":
                 x, y = data.get("x"), data.get("y")
                 with mss.mss() as sct:
-                    mon = sct.monitors[1]
+                    mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
                     mouse.position = (mon["left"] + x * mon["width"], mon["top"] + y * mon["height"])
                     
             elif msg_type == "mouse_click":
@@ -174,15 +189,24 @@ async def receive_commands(websocket):
                     mouse.release(button)
                 
         except Exception as e:
-            print(f"Ошибка обработки команды: {e}")
+            print(f"[-] Ошибка обработки команды: {e}")
 
 async def main():
-    print(f"Запуск сервера на порту {PORT}...")
-    print(f"Для подключения из любой точки мира пробросьте порт {PORT} на вашем роутере")
-    print(f"или используйте Ngrok/Tailscale.")
-    async with websockets.serve(handle_client, "0.0.0.0", PORT):
+    print("="*50)
+    print(f"🚀 СЕРВЕР УПРАВЛЕНИЯ ПК ЗАПУЩЕН")
+    print(f"📡 Порт: {PORT}")
+    print(f"🔑 Пароль (ID): {TUNNEL_ID}")
+    print("="*50)
+    print("\\nОжидание подключений...")
+    
+    # Запускаем сервер, который слушает все интерфейсы
+    async with websockets.serve(handle_client, "0.0.0.0", PORT, ping_interval=20, ping_timeout=20):
         await asyncio.Future()  # run forever
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\\nСервер остановлен пользователем.")
+        sys.exit(0)
 `;

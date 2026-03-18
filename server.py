@@ -38,7 +38,7 @@ async def capture_screen():
     img.save(buffer, format="JPEG", quality=60)
     return base64.b64encode(buffer.getvalue()).decode('utf-8')
 
-async def handle_client(websocket, path):
+async def handle_client(websocket, *args):
     print(f"Новое подключение: {websocket.remote_address}")
     
     # Ожидание авторизации
